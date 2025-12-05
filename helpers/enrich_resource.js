@@ -1,28 +1,31 @@
 /**
+ * helpers/enrich_resource.js
  * @file Helfer zum Anreichern eines Ressourcenobjekts mit Bewertungen & Feedback.
  */
 
-import { average } from './metrics.js';
+import Rating from '../models/rating.js';
+import Feedback from '../models/feedback.js';
+import { toClient } from '../utils/mongo.js';
 
-/**
- * Baut ein angereichertes Ressourcenobjekt mit `averageRating` und `feedback`
- * anhand der übergebenen Gesamtdaten.
- * @param {Object} resource - Die Basisressource.
- * @param {Array<Object>} ratings - Alle Ratings aus dem Datenspeicher.
- * @param {Array<Object>} feedback - Alles Feedback aus dem Datenspeicher.
- * @returns {Object} Enriched resource.
- */
-export function buildEnrichedResource(resource, ratings, feedback) {
-  const resourceId = String(resource.id);
+export async function buildEnrichedResource(resource) {
+  if (!resource?._id) return null;
+  const _id = resource._id;
 
-  const resourceRatings = ratings.filter(r => String(r.resourceId) === resourceId);
-  const avgRating = average(resourceRatings.map(r => r.ratingValue));
+  // Ratings durchschn. berechnen
+  const ratingAgg = await Rating.aggregate([
+    { $match: { resourceId: _id } },
+    { $group: { _id: null, avg: { $avg: "$ratingValue" } } }
+  ]);
+  const averageRating = ratingAgg[0]?.avg
+    ? Math.round(ratingAgg[0].avg * 100) / 100
+    : 0;
 
-  const resourceFeedback = feedback.filter(f => String(f.resourceId) === resourceId);
+  // Feedback laden
+  const feedback = await Feedback.find({ resourceId: _id }).lean();
 
   return {
-    ...resource,
-    averageRating: avgRating,
-    feedback: resourceFeedback
+    ...toClient(resource),
+    averageRating,
+    feedback: feedback.map(toClient) // immer Array, evtl. leer
   };
 }
